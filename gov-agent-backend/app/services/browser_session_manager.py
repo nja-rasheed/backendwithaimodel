@@ -202,6 +202,8 @@ class BrowserSessionManager:
             }
 
         except Exception as error:
+            import traceback
+            traceback.print_exc()
 
             if agent is not None:
                 try:
@@ -213,7 +215,7 @@ class BrowserSessionManager:
                 raise
 
             raise BrowserSessionError(
-                "Could not start the government portal browser session"
+                f"Could not start browser session: {type(error).__name__}: {error}"
             ) from error
 
     def observe(self, session_id, user_id):
