@@ -1,0 +1,14 @@
+
+.git
+.gitignore
+.venv
+venv
+__pycache__
+*.pyc
+.env
+.env.*
+!.env.example
+node_modules
+.pytest_cache
+.vscode
+.idea
