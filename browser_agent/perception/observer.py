@@ -69,29 +69,22 @@ class BrowserObserver:
         route.continue_()
 
     def start(self):
-        import asyncio
-        try:
-            asyncio.set_event_loop(None)
-        except Exception:
-            pass
+        from playwright.sync_api import sync_playwright
 
         self.playwright = sync_playwright().start()
 
         try:
             config = get_browser_config()
 
-            # Launch Chromium with engine-level stealth flags
             self.browser = self.playwright.chromium.launch(
                 **config.get_launch_options()
             )
 
-            # Use clean context options without conflicting headers or CSP-violating scripts
             context_opts = config.get_context_options()
             self.context = self.browser.new_context(**context_opts)
 
             self.page = self.context.new_page()
 
-            # Debug listeners
             self.page.on("console", lambda msg: print(f"BROWSER CONSOLE [{msg.type}]: {msg.text}"))
             self.page.on("requestfailed", lambda req: print(f"REQUEST FAILED: {req.url} - {req.failure}"))
 

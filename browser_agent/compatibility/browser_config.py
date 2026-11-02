@@ -1,50 +1,44 @@
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 
 @dataclass
 class BrowserConfig:
-
-    browser_name: str = "chromium"
-    headless: bool = True
-    timeout: int = 45000
-
+    headless: bool = False
     user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/124.0.0.0 Safari/537.36"
     )
+    extra_headers: Dict[str, str] = field(default_factory=lambda: {
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    })
 
     def get_launch_options(self) -> Dict[str, Any]:
         return {
             "headless": self.headless,
             "args": [
                 "--disable-blink-features=AutomationControlled",
+                "--start-maximized",
                 "--no-sandbox",
                 "--disable-setuid-sandbox",
-                "--disable-infobars",
-                "--window-size=1920,1080",
-                "--start-maximized",
             ],
         }
 
     def get_context_options(self) -> Dict[str, Any]:
         return {
             "user_agent": self.user_agent,
-            "viewport": {"width": 1920, "height": 1080},
+            "viewport": None,
+            "extra_http_headers": self.extra_headers,
             "locale": "en-US",
             "timezone_id": "Asia/Kolkata",
-            "has_touch": False,
-            "is_mobile": False,
-            "java_script_enabled": True,
             "ignore_https_errors": True,
-            # Leave extra_http_headers empty or omit completely so Chromium generates valid subresource headers
         }
 
 
 def get_browser_config() -> BrowserConfig:
-    headless_value = os.getenv("BROWSER_HEADLESS", "true").lower()
-    return BrowserConfig(
-        headless=headless_value == "true"
-    )
+    """Factory function to provide the browser configuration instance."""
+    is_headless = os.getenv("BROWSER_HEADLESS", "false").lower() == "true"
+    return BrowserConfig(headless=is_headless)
