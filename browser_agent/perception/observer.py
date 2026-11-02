@@ -37,14 +37,13 @@ class BrowserObserver:
 
     def _navigation_guard(self, route):
         """
-        Enforce the domain policy for navigation requests
-        across the entire browser context.
+        Enforce the domain policy strictly for top-level frame navigation
+        requests across the browser context without blocking essential subresources.
         """
-
         request = route.request
 
-        if request.is_navigation_request():
-
+        # Only restrict top-level document navigation, allow subresources (fonts, scripts, css)
+        if request.is_navigation_request() and request.frame == self.page.main_frame:
             action = {
                 "action": "navigate",
                 "target": request.url,
@@ -53,13 +52,15 @@ class BrowserObserver:
             }
 
             try:
-                authorize_action(
+                result = authorize_action(
                     action,
                     allowed_domains=self.allowed_domains
                 )
-
+                if not result.get("allowed"):
+                    raise ValueError("Domain not allowed")
             except Exception:
                 self.blocked_navigation_attempts.append({
+                    "url": request.url,
                     "reason": "unauthorized_navigation"
                 })
                 route.abort()
@@ -68,42 +69,31 @@ class BrowserObserver:
         route.continue_()
 
     def start(self):
+        import asyncio
+        try:
+            asyncio.set_event_loop(None)
+        except Exception:
+            pass
 
         self.playwright = sync_playwright().start()
 
         try:
             config = get_browser_config()
 
+            # Launch Chromium with engine-level stealth flags
             self.browser = self.playwright.chromium.launch(
                 **config.get_launch_options()
             )
 
-            # Retain an explicit browser context.
-            # Blocking service workers improves route interception
-            # consistency for this security-sensitive workflow.
-            self.context = self.browser.new_context(
-                viewport={
-                    "width": 1440,
-                    "height": 1000
-                },
-                screen={
-                    "width": 1440,
-                    "height": 1000
-                },
-                service_workers="block",
-                ignore_https_errors=getattr(
-                    self,
-                    "ignore_https_errors",
-                    False
-                )
-            )
-            # Install the policy once for this entire context.
-            self.context.route(
-                "**/*",
-                self._navigation_guard
-            )
+            # Use clean context options without conflicting headers or CSP-violating scripts
+            context_opts = config.get_context_options()
+            self.context = self.browser.new_context(**context_opts)
 
             self.page = self.context.new_page()
+
+            # Debug listeners
+            self.page.on("console", lambda msg: print(f"BROWSER CONSOLE [{msg.type}]: {msg.text}"))
+            self.page.on("requestfailed", lambda req: print(f"REQUEST FAILED: {req.url} - {req.failure}"))
 
             self.navigator = SafeNavigator(
                 page=self.page,
@@ -117,31 +107,38 @@ class BrowserObserver:
             raise
 
     def navigate(self, url):
-
         if self.navigator is None:
             raise RuntimeError("Browser has not been started")
 
         return self.navigator.navigate(url)
 
     def observe(self):
-
         if self.page is None or self.page.is_closed():
             raise RuntimeError("Browser page is unavailable")
 
+        # Give Angular/React SPA 500ms to settle rendering if DOM is completely blank
         return extract_dom(self.page)
 
     def close(self):
-
         if self.context:
-            self.context.close()
+            try:
+                self.context.close()
+            except Exception:
+                pass
             self.context = None
 
         if self.browser:
-            self.browser.close()
+            try:
+                self.browser.close()
+            except Exception:
+                pass
             self.browser = None
 
         if self.playwright:
-            self.playwright.stop()
+            try:
+                self.playwright.stop()
+            except Exception:
+                pass
             self.playwright = None
 
         self.page = None

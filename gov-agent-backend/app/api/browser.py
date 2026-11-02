@@ -1,6 +1,7 @@
 import logging
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
@@ -24,6 +25,21 @@ router = APIRouter(
 class BrowserSessionRequest(BaseModel):
     manifest: dict = Field(
         description="Validated execution manifest"
+    )
+
+
+class ActionExecuteRequest(BaseModel):
+    action: Optional[str] = Field(
+        default=None,
+        description="Action type, e.g. click, fill, navigate, or stop",
+    )
+    target: Optional[str] = Field(
+        default=None,
+        description="Target element text, field_ref, or selector",
+    )
+    parameters: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Optional parameters such as value references",
     )
 
 
@@ -94,6 +110,7 @@ async def get_browser_task(
     except BrowserSessionError as error:
         handle_browser_error(error)
 
+
 @router.post("/sessions/{session_id}/analyze")
 async def analyze_browser_session(
     session_id: str,
@@ -116,7 +133,37 @@ async def analyze_browser_session(
             detail="Gemini analysis failed"
         )
 
-        
+
+@router.post("/sessions/{session_id}/execute")
+async def execute_browser_action(
+    session_id: str,
+    request: Optional[ActionExecuteRequest] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Approve and execute a proposed browser action (e.g. clicking 'Fill Form 6').
+    Can accept the proposal body directly or an empty body to approve staged actions.
+    """
+    try:
+        action_dict = (
+            request.model_dump(exclude_unset=True)
+            if request and request.action
+            else None
+        )
+
+        result = await run_in_threadpool(
+            browser_session_manager.execute_session_action,
+            session_id,
+            current_user.id,
+            action_dict,
+        )
+        return result
+
+    except BrowserSessionError as error:
+        logger.error("BROWSER ACTION EXECUTION REJECTED: %s", error)
+        handle_browser_error(error)
+
+
 @router.delete("/sessions/{session_id}")
 async def close_browser_session(
     session_id: str,
