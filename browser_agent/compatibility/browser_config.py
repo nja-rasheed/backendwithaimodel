@@ -1,7 +1,8 @@
 import os
+import platform
 import sys
 from dataclasses import dataclass, field
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 def is_display_available() -> bool:
@@ -10,24 +11,36 @@ def is_display_available() -> bool:
         return True
     if sys.platform == "darwin":
         return True
-    # Linux / Docker containers
     return bool(os.getenv("DISPLAY"))
+
+
+def get_default_user_agent() -> str:
+    system = platform.system().lower()
+    if "linux" in system:
+        return (
+            "Mozilla/5.0 (X11; Linux x86_64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        )
+    return (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    )
 
 
 @dataclass
 class BrowserConfig:
     headless: bool = True
-    user_agent: str = (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
+    user_agent: str = field(default_factory=get_default_user_agent)
+    extra_headers: Dict[str, str] = field(
+        default_factory=lambda: {
+            "Accept-Language": "en-US,en;q=0.9",
+        }
     )
-    extra_headers: Dict[str, str] = field(default_factory=lambda: {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-    })
 
     def get_launch_options(self) -> Dict[str, Any]:
+        """Provides Chromium launch kwargs for Playwright."""
         return {
             "headless": self.headless,
             "args": [
@@ -39,6 +52,7 @@ class BrowserConfig:
         }
 
     def get_context_options(self) -> Dict[str, Any]:
+        """Provides browser context initialization options."""
         return {
             "user_agent": self.user_agent,
             "viewport": {"width": 1920, "height": 1080},
@@ -50,8 +64,7 @@ class BrowserConfig:
 
 
 def get_browser_config() -> BrowserConfig:
-    """Factory function providing the appropriate browser configuration."""
-    # Force headless if no display exists, otherwise respect BROWSER_HEADLESS env var
+    """Factory function returning the configured BrowserConfig instance."""
     if not is_display_available():
         headless = True
     else:
