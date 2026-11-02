@@ -61,14 +61,13 @@ async def create_browser_session(
     current_user: User = Depends(get_current_user),
 ):
     try:
+        # Call directly or via run_in_threadpool without passing an active loop
         result = await run_in_threadpool(
             browser_session_manager.create_session,
             current_user.id,
             request.manifest,
         )
-
         return result
-
     except BrowserSessionError as error:
         logger.error("BROWSER SESSION REJECTED: %s", error)
         handle_browser_error(error)

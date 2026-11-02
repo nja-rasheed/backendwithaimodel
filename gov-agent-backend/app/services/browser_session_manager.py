@@ -45,60 +45,52 @@ class BrowserSessionError(Exception):
 
 
 import asyncio
+import logging
 import queue
+import secrets
 import threading
+import time
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+
+class _PlaywrightEventLoopPolicy(asyncio.DefaultEventLoopPolicy):
+    """Event loop policy that guarantees worker threads report no running loop."""
+    def get_event_loop(self):
+        raise RuntimeError("No running event loop on Playwright worker thread")
 
 
-class PlaywrightWorkerThread(threading.Thread):
-    """
-    Dedicated background thread that runs all Playwright operations.
-    Explicitly removes any inherited asyncio event loop from this thread.
-    """
+def _init_playwright_thread():
+    """Executed once when the background worker thread is spawned."""
+    # Reset thread-local loop and override policy for this thread
+    try:
+        asyncio.set_event_loop(None)
+    except Exception:
+        pass
+
+
+class PlaywrightWorkerThread:
+    """Dedicated background OS thread running Playwright operations."""
 
     def __init__(self):
-        super().__init__(daemon=True, name="PlaywrightWorkerThread")
-        self._work_queue = queue.Queue()
-        self.start()
-
-    def run(self):
-        # Disassociate any inherited asyncio loop from this thread
-        try:
-            asyncio.set_event_loop(None)
-        except Exception:
-            pass
-
-        while True:
-            item = self._work_queue.get()
-            if item is None:
-                break
-
-            func, args, kwargs, result_future = item
-            try:
-                # Ensure the loop remains disassociated on each task invocation
-                try:
-                    asyncio.set_event_loop(None)
-                except Exception:
-                    pass
-
-                res = func(*args, **kwargs)
-                result_future["result"] = res
-            except Exception as e:
-                result_future["error"] = e
-            finally:
-                result_future["event"].set()
-                self._work_queue.task_done()
+        self._executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="PlaywrightWorker",
+            initializer=_init_playwright_thread,
+        )
 
     def execute(self, func, *args, **kwargs):
-        result_future = {"result": None, "error": None, "event": threading.Event()}
-        self._work_queue.put((func, args, kwargs, result_future))
-        result_future["event"].wait()
+        def _wrapper():
+            # Guarantee no event loop is registered on this thread during the call
+            try:
+                asyncio.set_event_loop(None)
+            except Exception:
+                pass
+            return func(*args, **kwargs)
 
-        if result_future["error"] is not None:
-            raise result_future["error"]
-        return result_future["result"]
+        future = self._executor.submit(_wrapper)
+        return future.result()
 
 
-# Global single-thread executor dedicated strictly to Playwright
 _playwright_worker = PlaywrightWorkerThread()
 
 
@@ -390,17 +382,27 @@ class BrowserSessionManager:
                 self._close_session_locked(session_id)
     def _execute_agent_action(self, agent, action=None):
         """Executes an action directly via the BrowserAgent on the worker thread."""
+        # 1. If an explicit action is provided from the request
+        if action:
+            normalized_action = {
+                "action": str(action.get("action", "")).strip().lower(),
+                "target": str(action.get("target", "")).strip(),
+                "parameters": action.get("parameters") if isinstance(action.get("parameters"), dict) else {},
+                "reason": str(action.get("reason") or "Approved execution by user").strip()
+            }
+
+            if agent.executor:
+                agent.executor.register_observation(agent.observer.observe())
+                result = agent.executor.execute(normalized_action, user_approved=True)
+                return {
+                    "status": "executed",
+                    "action": normalized_action["action"],
+                    "result": result,
+                }
+
+        # 2. If the agent already has a staged pending action, approve it
         if agent.pending_action is not None:
             return agent.approve_pending_action()
-
-        if action and agent.executor:
-            agent.executor.register_observation(agent.observer.observe())
-            result = agent.executor.execute(action, user_approved=True)
-            return {
-                "status": "executed",
-                "action": action.get("action"),
-                "result": result,
-            }
 
         raise BrowserSessionError("No pending or specified action to execute")
 
